@@ -1,0 +1,21 @@
+func (srv *{{.ReceiverName}}) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    {{range .FuncDefs}}
+    if "{{.ApiArgs.Url}}" == r.URL.Path {
+        if{{if .ApiArgs.NoMethod}} true {{else}} "{{.ApiArgs.Method}}" == r.Method{{end}} {
+            {{if .ApiArgs.Auth}}
+            errorMiddleware(authMiddleware(http.HandlerFunc(srv.handle{{.MethodName}}))).ServeHTTP(w, r)
+            {{- else}}
+            errorMiddleware(http.HandlerFunc(srv.handle{{.MethodName}})).ServeHTTP(w, r)
+            {{- end}}
+
+            return
+        } else {
+            handleServerError(w, http.StatusNotAcceptable, fmt.Errorf("bad method"))
+
+            return
+        }
+    }
+	{{end}}
+
+    handleServerError(w, http.StatusNotFound, fmt.Errorf("unknown method"))
+}

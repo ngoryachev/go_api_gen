@@ -1,0 +1,153 @@
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("authMiddleware", r.URL.Path)
+		xAuthHeader := r.Header.Get("X-Auth")
+
+		if xAuthHeader != "100500" {
+			fmt.Println("no auth at", r.URL.Path)
+
+			handleServerError(w, http.StatusForbidden, fmt.Errorf("unauthorized"))
+
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func errorMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("errorMiddleware", r.URL.Path)
+		defer func() {
+			if err := recover(); err != nil {
+				fmt.Println("recovered", err)
+
+				e := fmt.Errorf("%s", err)
+				handleServerError(w, http.StatusInternalServerError, e)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+type ServerResponse struct {
+	Error    string      `json:"error"`
+	Response interface{} `json:"response,omitempty"`
+}
+
+func (sr ServerResponse) Marshal() []byte {
+	b, _ := json.Marshal(sr)
+
+	return b
+}
+
+func handleServerError(w http.ResponseWriter, httpStatus int, err error) {
+	w.WriteHeader(httpStatus)
+	w.Write(ServerResponse{
+		Error: mapError(ApiError{
+			httpStatus,
+			err,
+		}.Error()),
+	}.Marshal())
+}
+
+func handleServerResponse(w http.ResponseWriter, response interface{}) {
+	//w.WriteHeader(http.StatusOK)
+	w.Write(ServerResponse{
+		Error:    "",
+		Response: response,
+	}.Marshal())
+}
+
+func ToInputValue(paramName, def, typeName string, hasDefault bool, values url.Values) (interface{}, error) {
+	var ret interface{}
+
+	has := values.Has(paramName)
+	sv := values.Get(paramName)
+
+	if has && len(sv) < 1 {
+		has = false
+	}
+
+	if !has {
+		if hasDefault {
+			sv = def
+		} else {
+			return nil, nil
+		}
+	}
+
+	switch typeName {
+	case "string":
+		ret = sv
+	case "int":
+		fallthrough
+	case "uint64":
+		var err error
+		ret, err = strconv.Atoi(sv)
+
+		if err != nil {
+			return nil, fmt.Errorf("!strconv.Atoi(sv)")
+		}
+	}
+
+	return ret, nil
+}
+
+func ParamName(paramName, name string) string {
+	var key string
+
+	if len(paramName) > 0 {
+		key = paramName
+	} else {
+		key = strings.ToLower(name)
+	}
+
+	return key
+}
+
+type InputValue struct {
+	ParamName  string
+	Def        string
+	TypeName   string
+	HasDefault bool
+}
+
+func InputMap(fields []InputValue, values url.Values) (map[string]interface{}, error) {
+	ret := map[string]interface{}{}
+	for _, f := range fields {
+		val, e := ToInputValue(f.ParamName, f.Def, f.TypeName, f.HasDefault, values)
+
+        if e != nil {
+            return nil, e
+        }
+
+		if val != nil {
+			ret[f.ParamName] = val
+		}
+	}
+
+	return ret, nil
+}
+
+var errorMapping map[string]string
+
+func init() {
+	errorMapping = map[string]string{
+		"login: required field missing":                                         "login must me not empty",
+		"login: new_m does not validate as minstringlength(10)":                 "login len must be >= 10",
+		"age: -1 does not validate as range(0|128)":                             "age must be >= 0",
+		"age: 256 does not validate as range(0|128)":                            "age must be <= 128",
+		"status: adm does not validate as in(user|moderator|admin)":             "status must be one of [user, moderator, admin]",
+		"interface conversion: error is *errors.errorString, not main.ApiError": "bad user",
+		"class: barbarian does not validate as in(warrior|sorcerer|rouge)":      "class must be one of [warrior, sorcerer, rouge]",
+        "!strconv.Atoi(sv)": "age must be int",
+	}
+}
+
+func mapError(s string) string {
+	if v, exists := errorMapping[s]; exists {
+		return v
+	}
+
+	return s
+}

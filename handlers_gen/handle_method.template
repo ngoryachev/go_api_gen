@@ -1,0 +1,39 @@
+{{range .FuncDefs}}
+func (srv *{{.ReceiverName}}) handle{{.MethodName}}(w http.ResponseWriter, r *http.Request) {
+    templateMap := {{.ArgumentStruct.TemplateMapString}}
+    inputValues := []InputValue{
+        {{range .ArgumentStruct.Fields}}
+            {{.GenInputValue}},
+        {{- end}}
+    }
+    r.ParseForm()
+    inputMap, e := InputMap(inputValues, r.Form)
+         if e != nil {
+             handleServerError(w, http.StatusBadRequest, e)
+
+         return
+    }
+
+    valid, err := govalidator.ValidateMap(inputMap, templateMap)
+
+    if !valid {
+        handleServerError(w, http.StatusBadRequest, err)
+
+        return
+    }
+
+    v, err := srv.{{.MethodName}}(r.Context(), {{.ArgumentTypeName}}{
+        {{range .ArgumentStruct.Fields}}
+            {{.GenParamKeyVal}},
+        {{- end}}
+    })
+
+    if err != nil {
+        handleServerError(w, err.(ApiError).HTTPStatus, err)
+
+        return
+    }
+
+    handleServerResponse(w, v)
+}
+{{end}}
